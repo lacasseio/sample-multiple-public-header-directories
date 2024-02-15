@@ -1,0 +1,80 @@
+= Allow multiple public headers in `cpp-library` plugin
+
+== Problem
+
+Gradle only allows exporting a single public header from `CppLibrary`.
+Thus, the following is invalid out of the box:
+
+```groovy
+library {
+    publicHeaders.from('includes')
+    publicHeaders.from('my-other-includes')
+}
+```
+
+== Solution
+
+We can use a `Sync` task to assemble the outgoing headers and export that single location in `cppApiElements`.
+
+Why not simply list all the `publicHeaders` and export them individually?
+Unfortunately, the `FileCollection` public API doesn't allow access to the raw content; thus, there is no way of reliably knowing how many locations we have to export.
+Exporting generated headers becomes especially impossible because the outgoing `Configuration` is processed immediately after the project evaluation.
+As part of the process, Gradle eagerly realizes the `outgoing.artifacts` collection, disallowing `addLater`/`addAllLater`.
+As we are still part of the configuration phase, we have two additional issues:
+
+1. Realizing the task output before the task executes.
+2. All non-generated paths will be ignored, as they are unknown.
+
+Using a Sync task as padding is a great and only solution.
+
+== Demonstration (script)
+
+```
+library {
+    publicHeaders.from('inc')
+    publicHeaders.from('includes')
+}
+```
+
+== Demonstration (build)
+
+```
+$ ./gradlew :app:assembleRelease --console=verbose
+> Task :lib2:syncCppApiElements    // <1>
+> Task :lib1:syncCppApiElements    // <1>
+> Task :lib2:compileReleaseCpp
+> Task :lib1:compileReleaseCpp
+> Task :lib2:linkRelease
+> Task :lib2:stripSymbolsRelease
+> Task :lib1:linkRelease
+> Task :lib1:stripSymbolsRelease
+> Task :app:compileReleaseCpp
+> Task :app:linkRelease
+> Task :app:extractSymbolsRelease
+> Task :app:stripSymbolsRelease
+> Task :app:installRelease
+> Task :app:assembleRelease
+
+BUILD SUCCESSFUL
+```
+<1>: Notice the sync task.
+
+The performance impact of the `Sync` is negligible thanks to Gradle's work avoidance features.
+
+== Demonstration (publish)
+
+```
+$ ./gradlew :lib1:publishAllPublicationsToMavenRepository
+
+BUILD SUCCESSFUL
+$ unzip -l repo/com/example/lib1/1.0/lib1-1.0-cpp-api-headers.zip
+Archive:  repo/com/example/lib1/1.0/lib1-1.0-cpp-api-headers.zip
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+        0  02-15-2024 09:11   one.h
+        0  02-15-2024 09:11   three/
+        0  02-15-2024 09:11   three/four.h
+        0  02-15-2024 09:11   two.h
+---------                     -------
+        0                     4 files
+```

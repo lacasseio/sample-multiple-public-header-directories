@@ -1,0 +1,27 @@
+rootProject.name = 'sample-multiple-public-header-directories'
+include 'app', 'lib1', 'lib2'
+
+//region Allow multiple public headers on CppLibrary
+gradle.allprojects {
+    pluginManager.withPlugin('cpp-library') {
+        extensions.configure('library') { library ->
+            configurations.named('cppApiElements') { apiElements ->
+                def syncTask = tasks.register("sync${apiElements.name.capitalize()}", Sync) { task ->
+                    task.setDescription('Assemble the C++ API elements (e.g. public headers)')
+                    task.setDestinationDir(file(layout.buildDirectory.dir("tmp/${library.name}")))
+                    task.from(library.publicHeaderDirs)
+                }
+
+                // Must delay the rewiring because Gradle plugin use afterEvaluate
+                project.afterEvaluate {
+                    // First, remove current artifacts, hence limitation to single dir
+                    outgoing.artifacts.clear()
+
+                    // Then, attach sync tasks as outgoing API elements
+                    outgoing.artifact(syncTask)
+                }
+            }
+        }
+    }
+}
+//endregion
